@@ -11,6 +11,29 @@ function init() {
     const passwordSubmit = document.getElementById('password-submit');
     const fingerprint = document.getElementById('fingerprint-icon');
     const statusEl = document.getElementById('status');
+    const titleEl = document.getElementById('lock-title');
+    const cancelLink = document.getElementById('cancel-link');
+
+    // Parse query params for site lock
+    const params = new URLSearchParams(window.location.search);
+    const site = params.get('site');
+    const returnUrl = params.get('returnUrl');
+    const isSiteLock = !!site;
+
+    // Update UI for site lock
+    if (isSiteLock) {
+        titleEl.textContent = site + ' is locked';
+        cancelLink.classList.remove('hidden');
+        cancelLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            // Go back or navigate to new tab
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = 'about:newtab';
+            }
+        });
+    }
 
     // Unlock with biometrics (WebAuthn — no native host needed)
     unlockBtn.addEventListener('click', async () => {
@@ -23,8 +46,21 @@ function init() {
         if (result.success) {
             setStatus('Authenticated!', 'success');
             fingerprint.className = 'fingerprint-icon success';
-            // Tell background to unlock the browser
-            chrome.runtime.sendMessage({ type: 'BIOMETRIC_AUTH_SUCCESS' });
+
+            if (isSiteLock) {
+                // Grant site session then redirect back
+                chrome.runtime.sendMessage(
+                    { type: 'SITE_BIOMETRIC_AUTH_SUCCESS', site },
+                    () => {
+                        if (returnUrl) {
+                            window.location.href = returnUrl;
+                        }
+                    }
+                );
+            } else {
+                // Global unlock
+                chrome.runtime.sendMessage({ type: 'BIOMETRIC_AUTH_SUCCESS' });
+            }
         } else {
             setStatus(result.error || 'Authentication failed', 'error');
             fingerprint.className = 'fingerprint-icon error';
@@ -57,23 +93,46 @@ function init() {
             return;
         }
 
-        chrome.runtime.sendMessage(
-            { type: 'AUTHENTICATE_PASSWORD', password },
-            (response) => {
-                if (response && response.success) {
-                    setStatus('Authenticated!', 'success');
-                    fingerprint.className = 'fingerprint-icon success';
-                } else {
-                    setStatus(response?.error || 'Incorrect password', 'error');
-                    passwordInput.value = '';
-                    passwordInput.focus();
-                    fingerprint.className = 'fingerprint-icon error';
-                    setTimeout(() => {
-                        fingerprint.className = 'fingerprint-icon';
-                    }, 2000);
+        if (isSiteLock) {
+            chrome.runtime.sendMessage(
+                { type: 'SITE_AUTHENTICATE_PASSWORD', password, site },
+                (response) => {
+                    if (response && response.success) {
+                        setStatus('Authenticated!', 'success');
+                        fingerprint.className = 'fingerprint-icon success';
+                        if (returnUrl) {
+                            window.location.href = returnUrl;
+                        }
+                    } else {
+                        setStatus(response?.error || 'Incorrect password', 'error');
+                        passwordInput.value = '';
+                        passwordInput.focus();
+                        fingerprint.className = 'fingerprint-icon error';
+                        setTimeout(() => {
+                            fingerprint.className = 'fingerprint-icon';
+                        }, 2000);
+                    }
                 }
-            }
-        );
+            );
+        } else {
+            chrome.runtime.sendMessage(
+                { type: 'AUTHENTICATE_PASSWORD', password },
+                (response) => {
+                    if (response && response.success) {
+                        setStatus('Authenticated!', 'success');
+                        fingerprint.className = 'fingerprint-icon success';
+                    } else {
+                        setStatus(response?.error || 'Incorrect password', 'error');
+                        passwordInput.value = '';
+                        passwordInput.focus();
+                        fingerprint.className = 'fingerprint-icon error';
+                        setTimeout(() => {
+                            fingerprint.className = 'fingerprint-icon';
+                        }, 2000);
+                    }
+                }
+            );
+        }
     }
 
     function setStatus(text, type) {
@@ -81,7 +140,7 @@ function init() {
         statusEl.className = `status ${type}`;
     }
 
-    // Listen for unlock from background
+    // Listen for unlock from background (global lock only)
     chrome.runtime.onMessage.addListener((message) => {
         if (message.type === 'UNLOCK') {
             fingerprint.className = 'fingerprint-icon success';

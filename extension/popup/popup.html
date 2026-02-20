@@ -104,6 +104,24 @@
       </div>
     </div>
 
+    <!-- Locked Websites -->
+    <div class="sites-section">
+      <div class="sites-header">
+        <span class="setting-label">Locked Websites</span>
+        <select id="site-duration-select" class="setting-select site-duration-select">
+          <option value="5">5 min</option>
+          <option value="15">15 min</option>
+          <option value="30" selected>30 min</option>
+          <option value="60">60 min</option>
+        </select>
+      </div>
+      <div class="sites-input-row">
+        <input type="text" id="site-input" class="setting-input site-input" placeholder="example.com">
+        <button id="add-site-btn" class="setting-btn add-site-btn">Add</button>
+      </div>
+      <div id="sites-list" class="sites-list"></div>
+    </div>
+
     <!-- Biometric Status -->
     <div id="biometric-info" class="biometric-info">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"

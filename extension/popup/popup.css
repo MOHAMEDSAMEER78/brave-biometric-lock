@@ -366,6 +366,136 @@ body::before {
   font-weight: 500;
 }
 
+/* ---- Locked Websites Section ---- */
+.sites-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 14px 18px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.sites-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.site-duration-select {
+  font-size: 11px;
+  padding: 5px 24px 5px 10px;
+}
+
+.sites-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.site-input {
+  flex: 1;
+  width: auto;
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
+.add-site-btn {
+  flex-shrink: 0;
+}
+
+.sites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.sites-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sites-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sites-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+
+.site-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  transition: background 0.2s ease;
+}
+
+.site-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.site-item-domain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.site-item-domain svg {
+  flex-shrink: 0;
+  color: #ff8c42;
+  opacity: 0.6;
+}
+
+.site-item-domain span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  padding: 0;
+  font-family: inherit;
+}
+
+.site-remove-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fb7185;
+}
+
+.sites-empty {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.2);
+  text-align: center;
+  padding: 8px 0;
+  font-weight: 500;
+}
+
 /* ---- Biometric Info ---- */
 .biometric-info {
   display: flex;

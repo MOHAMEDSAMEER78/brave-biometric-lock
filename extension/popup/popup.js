@@ -162,6 +162,59 @@ async function init() {
         updateLockIndicator(true);
         showToast('Browser locked');
     });
+
+    // ---- Locked Websites ----
+    const siteInput = document.getElementById('site-input');
+    const addSiteBtn = document.getElementById('add-site-btn');
+    const sitesList = document.getElementById('sites-list');
+    const siteDurationSelect = document.getElementById('site-duration-select');
+
+    // Load locked sites and duration
+    const siteData = await sendMessage({ type: 'GET_LOCKED_SITES' });
+    let lockedSites = siteData.sites || [];
+    const siteDuration = siteData.duration || 30;
+    siteDurationSelect.value = String(siteDuration);
+    renderSitesList(lockedSites, sitesList);
+
+    // Auto-detect current tab domain as placeholder
+    try {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (activeTab && activeTab.url) {
+            const url = new URL(activeTab.url);
+            if (url.hostname && !url.protocol.startsWith('chrome') && !url.protocol.startsWith('brave')) {
+                const domain = url.hostname.replace(/^www\./, '');
+                siteInput.placeholder = domain;
+            }
+        }
+    } catch (e) { }
+
+    // Add site
+    addSiteBtn.addEventListener('click', async () => {
+        const domain = siteInput.value.trim();
+        if (!domain) {
+            showToast('Enter a domain', true);
+            return;
+        }
+        const result = await sendMessage({ type: 'ADD_LOCKED_SITE', domain });
+        if (result.success) {
+            lockedSites = result.sites;
+            renderSitesList(lockedSites, sitesList);
+            siteInput.value = '';
+            showToast('Site locked');
+        } else {
+            showToast(result.error || 'Failed to add site', true);
+        }
+    });
+
+    siteInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') addSiteBtn.click();
+    });
+
+    // Site duration change
+    siteDurationSelect.addEventListener('change', async (e) => {
+        await sendMessage({ type: 'SET_SITE_LOCK_DURATION', duration: e.target.value });
+        showToast('Session duration updated');
+    });
 }
 
 // ---- Helpers ----
@@ -196,6 +249,41 @@ function updateAutoLockDesc(value) {
         desc.textContent = 'Only manual lock';
     } else {
         desc.textContent = `Lock after ${value} min idle`;
+    }
+}
+
+function renderSitesList(sites, container) {
+    container.innerHTML = '';
+    if (sites.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'sites-empty';
+        empty.textContent = 'No locked websites';
+        container.appendChild(empty);
+        return;
+    }
+    for (const site of sites) {
+        const item = document.createElement('div');
+        item.className = 'site-item';
+
+        const domainEl = document.createElement('div');
+        domainEl.className = 'site-item-domain';
+        domainEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>${site}</span>`;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'site-remove-btn';
+        removeBtn.title = 'Remove';
+        removeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+        removeBtn.addEventListener('click', async () => {
+            const result = await sendMessage({ type: 'REMOVE_LOCKED_SITE', domain: site });
+            if (result.success) {
+                renderSitesList(result.sites, container);
+                showToast('Site removed');
+            }
+        });
+
+        item.appendChild(domainEl);
+        item.appendChild(removeBtn);
+        container.appendChild(item);
     }
 }
 

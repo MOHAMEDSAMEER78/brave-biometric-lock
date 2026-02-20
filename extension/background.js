@@ -10,7 +10,52 @@ const STORAGE_KEYS = {
   AUTO_LOCK_MINUTES: 'auto_lock_minutes',
   FALLBACK_PASSWORD_HASH: 'fallback_password_hash',
   SAVED_TABS: 'saved_tabs',
+  LOCKED_SITES: 'locked_sites',
+  SITE_SESSIONS: 'site_sessions',
+  SITE_LOCK_DURATION: 'site_lock_duration',
 };
+
+// ---- Site Lock Utilities ----
+
+function getMatchingLockedSite(url, lockedSites) {
+  try {
+    const hostname = new URL(url).hostname;
+    for (const site of lockedSites) {
+      // Exact match or subdomain match (google.com matches mail.google.com)
+      if (hostname === site || hostname.endsWith('.' + site)) {
+        return site;
+      }
+    }
+  } catch (e) { }
+  return null;
+}
+
+function normalizeDomain(input) {
+  let domain = input.trim().toLowerCase();
+  // Strip protocol
+  domain = domain.replace(/^https?:\/\//, '');
+  // Strip path, query, hash
+  domain = domain.split('/')[0].split('?')[0].split('#')[0];
+  // Strip www.
+  domain = domain.replace(/^www\./, '');
+  // Strip trailing dots
+  domain = domain.replace(/\.+$/, '');
+  return domain;
+}
+
+async function grantSiteSession(site) {
+  const data = await chrome.storage.local.get([STORAGE_KEYS.SITE_SESSIONS, STORAGE_KEYS.SITE_LOCK_DURATION]);
+  const sessions = data[STORAGE_KEYS.SITE_SESSIONS] || {};
+  const duration = data[STORAGE_KEYS.SITE_LOCK_DURATION] || 30;
+  sessions[site] = Date.now() + duration * 60 * 1000;
+  await chrome.storage.local.set({ [STORAGE_KEYS.SITE_SESSIONS]: sessions });
+}
+
+function isInternalUrl(url) {
+  return url.startsWith('chrome://') || url.startsWith('brave://') ||
+    url.startsWith('chrome-extension://') || url.startsWith('about:') ||
+    url.startsWith('edge://') || url.startsWith('devtools://');
+}
 
 // ---- Initialization ----
 chrome.runtime.onInstalled.addListener(async () => {
@@ -27,6 +72,9 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 // Lock on browser startup
 chrome.runtime.onStartup.addListener(async () => {
+  // Clear all site sessions on restart (forces re-auth)
+  await chrome.storage.local.set({ [STORAGE_KEYS.SITE_SESSIONS]: {} });
+
   const data = await chrome.storage.local.get([STORAGE_KEYS.LOCK_ENABLED]);
   if (data[STORAGE_KEYS.LOCK_ENABLED]) {
     await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: true });
@@ -100,7 +148,11 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
 // ---- Lock / Unlock ----
 async function lockBrowser() {
-  await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: true });
+  // Clear all site sessions when global lock activates
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.IS_LOCKED]: true,
+    [STORAGE_KEYS.SITE_SESSIONS]: {},
+  });
 
   const tabs = await chrome.tabs.query({});
 
@@ -194,16 +246,41 @@ async function unlockBrowser() {
   chrome.action.setBadgeText({ text: '' });
 }
 
-// Also intercept tab navigation while locked
+// Also intercept tab navigation while locked (global + site locks)
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.url) {
-    const data = await chrome.storage.local.get([STORAGE_KEYS.IS_LOCKED]);
-    if (data[STORAGE_KEYS.IS_LOCKED] && !changeInfo.url.startsWith(chrome.runtime.getURL(''))) {
-      try {
-        await chrome.tabs.update(tabId, { url: LOCK_PAGE });
-      } catch (e) { }
-    }
+  if (!changeInfo.url) return;
+  if (isInternalUrl(changeInfo.url) || changeInfo.url.startsWith(chrome.runtime.getURL(''))) return;
+
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.IS_LOCKED,
+    STORAGE_KEYS.LOCKED_SITES,
+    STORAGE_KEYS.SITE_SESSIONS,
+  ]);
+
+  // Global lock takes priority
+  if (data[STORAGE_KEYS.IS_LOCKED]) {
+    try {
+      await chrome.tabs.update(tabId, { url: LOCK_PAGE });
+    } catch (e) { }
+    return;
   }
+
+  // Site lock check
+  const lockedSites = data[STORAGE_KEYS.LOCKED_SITES] || [];
+  if (lockedSites.length === 0) return;
+
+  const matchedSite = getMatchingLockedSite(changeInfo.url, lockedSites);
+  if (!matchedSite) return;
+
+  const sessions = data[STORAGE_KEYS.SITE_SESSIONS] || {};
+  if (sessions[matchedSite] && Date.now() < sessions[matchedSite]) return;
+
+  // No valid session — redirect to lock page
+  const lockUrl = LOCK_PAGE + '?site=' + encodeURIComponent(matchedSite) +
+    '&returnUrl=' + encodeURIComponent(changeInfo.url);
+  try {
+    await chrome.tabs.update(tabId, { url: lockUrl });
+  } catch (e) { }
 });
 
 // ---- Password Hashing ----
@@ -248,6 +325,41 @@ chrome.storage.local.get([STORAGE_KEYS.AUTO_LOCK_MINUTES], (data) => {
   if (minutes > 0) {
     chrome.idle.setDetectionInterval(minutes * 60);
   }
+});
+
+// ---- Site Lock Navigation Interception ----
+chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+  // Only intercept main frame navigations
+  if (details.frameId !== 0) return;
+
+  const url = details.url;
+  if (isInternalUrl(url) || url.startsWith(chrome.runtime.getURL(''))) return;
+
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.IS_LOCKED,
+    STORAGE_KEYS.LOCKED_SITES,
+    STORAGE_KEYS.SITE_SESSIONS,
+  ]);
+
+  // Global lock takes priority (handled by existing logic)
+  if (data[STORAGE_KEYS.IS_LOCKED]) return;
+
+  const lockedSites = data[STORAGE_KEYS.LOCKED_SITES] || [];
+  if (lockedSites.length === 0) return;
+
+  const matchedSite = getMatchingLockedSite(url, lockedSites);
+  if (!matchedSite) return;
+
+  // Check session (lazy expiry)
+  const sessions = data[STORAGE_KEYS.SITE_SESSIONS] || {};
+  if (sessions[matchedSite] && Date.now() < sessions[matchedSite]) return;
+
+  // No valid session — redirect to lock page
+  const lockUrl = LOCK_PAGE + '?site=' + encodeURIComponent(matchedSite) +
+    '&returnUrl=' + encodeURIComponent(url);
+  try {
+    await chrome.tabs.update(details.tabId, { url: lockUrl });
+  } catch (e) { }
 });
 
 // ---- Message Handling ----
@@ -350,6 +462,81 @@ async function handleMessage(message, sender) {
       // Service workers don't have access to navigator.credentials, so we return
       // a hint to check from the extension page context.
       return { supported: false, error: 'Check from extension page using isBiometricAvailable()' };
+    }
+
+    // ---- Site Lock Message Handlers ----
+
+    case 'SITE_BIOMETRIC_AUTH_SUCCESS': {
+      if (sender.url && sender.url.startsWith(chrome.runtime.getURL(''))) {
+        const site = message.site;
+        if (site) {
+          await grantSiteSession(site);
+          return { success: true };
+        }
+        return { success: false, error: 'No site specified' };
+      }
+      return { success: false, error: 'Unauthorized sender' };
+    }
+
+    case 'SITE_AUTHENTICATE_PASSWORD': {
+      const verified = await verifyPassword(message.password);
+      if (verified) {
+        const site = message.site;
+        if (site) {
+          await grantSiteSession(site);
+          return { success: true };
+        }
+        return { success: false, error: 'No site specified' };
+      }
+      return { success: false, error: 'Incorrect password' };
+    }
+
+    case 'ADD_LOCKED_SITE': {
+      const domain = normalizeDomain(message.domain || '');
+      if (!domain || !domain.includes('.')) {
+        return { success: false, error: 'Invalid domain' };
+      }
+      const siteData = await chrome.storage.local.get([STORAGE_KEYS.LOCKED_SITES]);
+      const sites = siteData[STORAGE_KEYS.LOCKED_SITES] || [];
+      if (sites.includes(domain)) {
+        return { success: false, error: 'Site already locked' };
+      }
+      sites.push(domain);
+      await chrome.storage.local.set({ [STORAGE_KEYS.LOCKED_SITES]: sites });
+      return { success: true, sites };
+    }
+
+    case 'REMOVE_LOCKED_SITE': {
+      const siteData = await chrome.storage.local.get([STORAGE_KEYS.LOCKED_SITES, STORAGE_KEYS.SITE_SESSIONS]);
+      const sites = (siteData[STORAGE_KEYS.LOCKED_SITES] || []).filter(s => s !== message.domain);
+      const sessions = siteData[STORAGE_KEYS.SITE_SESSIONS] || {};
+      delete sessions[message.domain];
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.LOCKED_SITES]: sites,
+        [STORAGE_KEYS.SITE_SESSIONS]: sessions,
+      });
+      return { success: true, sites };
+    }
+
+    case 'GET_LOCKED_SITES': {
+      const siteData = await chrome.storage.local.get([
+        STORAGE_KEYS.LOCKED_SITES,
+        STORAGE_KEYS.SITE_LOCK_DURATION,
+      ]);
+      return {
+        success: true,
+        sites: siteData[STORAGE_KEYS.LOCKED_SITES] || [],
+        duration: siteData[STORAGE_KEYS.SITE_LOCK_DURATION] || 30,
+      };
+    }
+
+    case 'SET_SITE_LOCK_DURATION': {
+      const duration = parseInt(message.duration, 10);
+      if (isNaN(duration) || duration < 1) {
+        return { success: false, error: 'Invalid duration' };
+      }
+      await chrome.storage.local.set({ [STORAGE_KEYS.SITE_LOCK_DURATION]: duration });
+      return { success: true };
     }
 
     default:

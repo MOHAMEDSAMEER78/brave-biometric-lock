@@ -382,6 +382,26 @@ body {
     color: #ff8c42;
 }
 
+/* ---- Cancel Link (site locks) ---- */
+.cancel-link {
+    display: inline-block;
+    margin-top: 20px;
+    color: rgba(255, 255, 255, 0.25);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: color 0.25s ease;
+    letter-spacing: 0.1px;
+}
+
+.cancel-link:hover {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.cancel-link.hidden {
+    display: none;
+}
+
 /* ---- Footer ---- */
 .footer {
     position: absolute;

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brave Biometric Lock</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="popup">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+          stroke-linejoin="round" width="28" height="28">
+          <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4" />
+          <path d="M14 13.12c0 2.38 0 6.38-1 8.88" />
+          <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02" />
+          <path d="M2 12a10 10 0 0 1 18-6" />
+          <path d="M2 16h.01" />
+          <path d="M21.8 16c.2-2 .131-5.354 0-6" />
+          <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2" />
+          <path d="M8.65 22c.21-.66.45-1.32.57-2" />
+          <path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2" />
+        </svg>
+      </div>
+      <div class="header-text">
+        <h1>Biometric Lock</h1>
+        <p id="status-text" class="status-text">Initializing...</p>
+      </div>
+    </div>
+
+    <!-- Lock Status -->
+    <div id="lock-indicator" class="lock-indicator unlocked">
+      <div class="lock-dot"></div>
+      <span id="lock-status-label">Unlocked</span>
+    </div>
+
+    <!-- Settings -->
+    <div class="settings">
+      <!-- Enable Lock Toggle -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">Enable Lock</span>
+          <span class="setting-desc">Lock browser on startup</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-lock">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <!-- Auto-Lock Timeout -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">Auto-Lock</span>
+          <span class="setting-desc" id="auto-lock-desc">Lock when idle</span>
+        </div>
+        <select id="auto-lock-select" class="setting-select">
+          <option value="close">On close</option>
+          <option value="1">1 min</option>
+          <option value="5" selected>5 min</option>
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+          <option value="0">Never</option>
+        </select>
+      </div>
+
+      <!-- Fallback Password -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">Fallback Password</span>
+          <span class="setting-desc" id="password-status">Not set</span>
+        </div>
+        <button id="set-password-btn" class="setting-btn">Set</button>
+      </div>
+
+      <!-- Password Form (hidden by default) -->
+      <div id="password-form" class="password-form hidden">
+        <!-- Verify step (shown when resetting) -->
+        <div id="verify-step" class="hidden">
+          <span class="setting-desc"
+            style="margin-bottom:6px;display:block;font-size:12px;color:rgba(255,255,255,0.45)">Verify your identity to
+            reset password</span>
+          <input type="password" id="verify-password-input" class="setting-input full"
+            placeholder="Enter current password">
+          <div class="password-actions" style="margin-top:6px">
+            <button id="verify-biometric-btn" class="btn btn-ghost btn-sm">Use Touch ID</button>
+            <button id="verify-password-btn" class="btn btn-primary btn-sm">Verify</button>
+          </div>
+          <p id="verify-error" class="verify-error"></p>
+        </div>
+        <!-- New password step -->
+        <div id="new-password-step" class="hidden">
+          <input type="password" id="password-input" class="setting-input full" placeholder="Enter new password">
+          <input type="password" id="password-confirm" class="setting-input full" placeholder="Confirm new password">
+          <div class="password-actions">
+            <button id="password-save" class="btn btn-primary btn-sm">Save</button>
+            <button id="password-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Biometric Status -->
+    <div id="biometric-info" class="biometric-info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round" width="14" height="14">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4" />
+        <path d="M12 8h.01" />
+      </svg>
+      <span id="biometric-status">Checking biometrics...</span>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="actions">
+      <button id="lock-now-btn" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round" width="16" height="16">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+        Lock Now
+      </button>
+    </div>
+  </div>
+
+  <script src="../biometric.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>

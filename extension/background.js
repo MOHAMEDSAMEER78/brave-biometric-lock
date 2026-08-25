@@ -1,21 +1,43 @@
 // ============================================================
-// Brave Biometric Lock — Background Service Worker
+// Brave Biometric Lock v2 — Background Service Worker
 // ============================================================
+
+// NOTE: Service workers can be killed and restarted at any time.
+// All persistent state lives in chrome.storage. Mutable globals
+// are only used as within-wake caches and must never be trusted
+// across wake cycles.
 
 const LOCK_PAGE = chrome.runtime.getURL('lock/lock.html');
 
-const STORAGE_KEYS = {
+// Inline constants (background.js cannot import ES modules or
+// load a <script> tag, so we duplicate the frozen objects here).
+const STORAGE_KEYS = Object.freeze({
   IS_LOCKED: 'biometric_locked',
   LOCK_ENABLED: 'biometric_lock_enabled',
   AUTO_LOCK_MINUTES: 'auto_lock_minutes',
-  FALLBACK_PASSWORD_HASH: 'fallback_password_hash',
+  FALLBACK_PASSWORD: 'fallback_password_v2',
+  FALLBACK_PASSWORD_HASH_V1: 'fallback_password_hash',
   SAVED_TABS: 'saved_tabs',
-};
+  WEBAUTHN_CREDENTIAL: 'webauthn_credential',
+  LAST_UNLOCK_TIME: 'last_unlock_time',
+  FAILED_ATTEMPTS: 'failed_attempts',
+  LOCKED_UNTIL: 'locked_until',
+  STARTUP_LOCK_APPLIED: 'startup_lock_applied',
+});
+
+const ALARM_NAME = 'biometricLockAutoLock';
+
+// Brute-force lockout thresholds: after N failures, lock out for D ms.
+const LOCKOUT_SCHEDULE = [
+  { after: 3, durationMs: 30_000 },
+  { after: 5, durationMs: 300_000 },
+  { after: 10, durationMs: Infinity }, // permanent until biometric succeeds
+];
 
 // ---- Initialization ----
-chrome.runtime.onInstalled.addListener(async () => {
-  const data = await chrome.storage.local.get([STORAGE_KEYS.LOCK_ENABLED]);
 
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  const data = await chrome.storage.local.get([STORAGE_KEYS.LOCK_ENABLED]);
   if (data[STORAGE_KEYS.LOCK_ENABLED] === undefined) {
     await chrome.storage.local.set({
       [STORAGE_KEYS.LOCK_ENABLED]: false,
@@ -25,293 +47,403 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
-// Lock on browser startup
+// ---- Startup: lock browser if lock was enabled ----
+// Uses chrome.storage.session (cleared on browser close) to prevent
+// the startup handler from re-locking after a service worker restart
+// within the same browser session.
 chrome.runtime.onStartup.addListener(async () => {
-  const data = await chrome.storage.local.get([STORAGE_KEYS.LOCK_ENABLED]);
-  if (data[STORAGE_KEYS.LOCK_ENABLED]) {
-    await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: true });
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.LOCK_ENABLED,
+    STORAGE_KEYS.IS_LOCKED,
+  ]);
 
-    // Save restored tabs FIRST — these are the real URLs from the last session
-    const tabs = await chrome.tabs.query({});
-    const realTabs = tabs.filter(t => t.url && !t.url.includes('lock/lock.html') && !t.url.startsWith('chrome-extension://'));
-    if (realTabs.length > 0) {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.SAVED_TABS]: realTabs.map(t => ({ id: t.id, url: t.url })),
-      });
-    }
+  if (!data[STORAGE_KEYS.LOCK_ENABLED]) return;
 
-    // NOW redirect all tabs to lock page
-    for (const tab of tabs) {
-      try {
-        if (tab.url && tab.url.startsWith(chrome.runtime.getURL(''))) continue;
-        await chrome.tabs.update(tab.id, { url: LOCK_PAGE });
-      } catch (e) { }
-    }
-    chrome.action.setBadgeText({ text: '🔒' });
-    chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+  // Check if we already handled startup locking this session
+  let sessionData = {};
+  try {
+    sessionData = await chrome.storage.session.get([STORAGE_KEYS.STARTUP_LOCK_APPLIED]);
+  } catch (_) {
+    // chrome.storage.session unavailable in older builds — fall through
   }
+
+  if (sessionData[STORAGE_KEYS.STARTUP_LOCK_APPLIED]) return;
+
+  try {
+    await chrome.storage.session.set({ [STORAGE_KEYS.STARTUP_LOCK_APPLIED]: true });
+  } catch (_) {}
+
+  // Snapshot current tabs before redirecting
+  await snapshotTabs();
+
+  await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: true });
+  await redirectAllTabsToLockPage();
+  setBadgeLocked();
 });
 
-// Continuously snapshot open tabs so we always have latest URLs
-// (handles the case where user closes browser directly without locking first)
+// ---- Tab Snapshotting ----
+// Continuously records real tab URLs so restoration is accurate after locking.
+
 async function snapshotTabs() {
-  const data = await chrome.storage.local.get([STORAGE_KEYS.LOCK_ENABLED, STORAGE_KEYS.IS_LOCKED]);
-  // Only snapshot when lock is enabled but browser is NOT currently locked
-  if (data[STORAGE_KEYS.LOCK_ENABLED] && !data[STORAGE_KEYS.IS_LOCKED]) {
-    const tabs = await chrome.tabs.query({});
-    const realTabs = tabs.filter(t => t.url && !t.url.includes('lock/lock.html') && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:'));
-    if (realTabs.length > 0) {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.SAVED_TABS]: realTabs.map(t => ({ id: t.id, url: t.url })),
-      });
-    }
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.LOCK_ENABLED,
+    STORAGE_KEYS.IS_LOCKED,
+  ]);
+
+  if (!data[STORAGE_KEYS.LOCK_ENABLED] || data[STORAGE_KEYS.IS_LOCKED]) return;
+
+  const tabs = await chrome.tabs.query({});
+  const realTabs = tabs
+    .filter((t) => t.url && !isExtensionUrl(t.url) && !isInternalUrl(t.url))
+    .map((t) => ({ url: t.url, pinned: t.pinned, index: t.index }));
+
+  if (realTabs.length > 0) {
+    await chrome.storage.local.set({ [STORAGE_KEYS.SAVED_TABS]: realTabs });
   }
 }
 
-// Snapshot on tab changes
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'complete') snapshotTabs();
 });
+
 chrome.tabs.onRemoved.addListener(() => snapshotTabs());
 
-// Fallback: also check lock state when any tab is created (catches startup tabs)
-let startupLockChecked = false;
+// Reset the auto-lock alarm whenever the user switches tabs (activity signal)
+chrome.tabs.onActivated.addListener(() => rescheduleAutoLockAlarm());
+
+// Intercept newly created tabs while locked
 chrome.tabs.onCreated.addListener(async (tab) => {
-  const data = await chrome.storage.local.get([STORAGE_KEYS.IS_LOCKED, STORAGE_KEYS.LOCK_ENABLED]);
-
-  // On very first tab after startup, ensure lock is applied
-  if (!startupLockChecked && data[STORAGE_KEYS.LOCK_ENABLED]) {
-    startupLockChecked = true;
-    if (data[STORAGE_KEYS.IS_LOCKED]) {
-      try {
-        await chrome.tabs.update(tab.id, { url: LOCK_PAGE });
-      } catch (e) { }
-      return;
-    }
-  }
-
-  // Normal lock interception for new tabs while locked
+  const data = await chrome.storage.local.get([STORAGE_KEYS.IS_LOCKED]);
   if (data[STORAGE_KEYS.IS_LOCKED]) {
     try {
       await chrome.tabs.update(tab.id, { url: LOCK_PAGE });
-    } catch (e) { }
+    } catch (_) {}
+  }
+});
+
+// Intercept URL changes while locked
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+  const data = await chrome.storage.local.get([STORAGE_KEYS.IS_LOCKED]);
+  if (data[STORAGE_KEYS.IS_LOCKED] && !isExtensionUrl(changeInfo.url)) {
+    try {
+      await chrome.tabs.update(tabId, { url: LOCK_PAGE });
+    } catch (_) {}
   }
 });
 
 // ---- Lock / Unlock ----
+
 async function lockBrowser() {
+  await snapshotTabs(); // capture final state before locking
+
   await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: true });
-
-  const tabs = await chrome.tabs.query({});
-
-  // Only save tabs if we don't already have real saved tabs
-  // (prevents overwriting real URLs with lock page URLs on startup)
-  const existing = await chrome.storage.local.get([STORAGE_KEYS.SAVED_TABS]);
-  const alreadySaved = existing[STORAGE_KEYS.SAVED_TABS] || [];
-  const hasRealSavedTabs = alreadySaved.some(t => t.url && !t.url.includes('lock/lock.html'));
-
-  if (!hasRealSavedTabs) {
-    const realTabs = tabs.filter(t => t.url && !t.url.startsWith(chrome.runtime.getURL('')));
-    if (realTabs.length > 0) {
-      await chrome.storage.local.set({ [STORAGE_KEYS.SAVED_TABS]: realTabs.map(t => ({ id: t.id, url: t.url })) });
-    }
-  }
-
-  // Redirect ALL tabs to the lock page
-  for (const tab of tabs) {
-    try {
-      // Skip tabs already showing the lock page
-      if (tab.url && tab.url.startsWith(chrome.runtime.getURL(''))) continue;
-      await chrome.tabs.update(tab.id, { url: LOCK_PAGE });
-    } catch (e) {
-      // Some tabs can't be updated (devtools, etc.)
-    }
-  }
-
-  // Update badge
-  chrome.action.setBadgeText({ text: '🔒' });
-  chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+  await redirectAllTabsToLockPage();
+  setBadgeLocked();
+  cancelAutoLockAlarm();
 }
 
 async function unlockBrowser() {
-  await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: false });
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.IS_LOCKED]: false,
+    [STORAGE_KEYS.LAST_UNLOCK_TIME]: Date.now(),
+    [STORAGE_KEYS.FAILED_ATTEMPTS]: 0,
+    [STORAGE_KEYS.LOCKED_UNTIL]: null,
+  });
 
-  // Restore saved tab URLs
   const data = await chrome.storage.local.get([STORAGE_KEYS.SAVED_TABS]);
-  const savedTabs = data[STORAGE_KEYS.SAVED_TABS] || [];
-
-  const currentTabs = await chrome.tabs.query({});
-
-  // Filter saved tabs to only real URLs (not extension pages)
-  const restorable = savedTabs.filter(
-    (t) => t.url && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:')
+  const savedTabs = (data[STORAGE_KEYS.SAVED_TABS] || []).filter(
+    (t) => t.url && !isExtensionUrl(t.url) && !isInternalUrl(t.url)
   );
 
-  if (restorable.length > 0) {
-    // Restore each current tab to its corresponding saved URL
-    for (let i = 0; i < currentTabs.length; i++) {
-      const savedUrl = restorable[i] ? restorable[i].url : null;
+  const lockTabs = await chrome.tabs.query({});
 
-      if (savedUrl) {
+  if (savedTabs.length > 0) {
+    // Restore: navigate the first lock tab to the first saved URL,
+    // open new tabs for the rest, then close excess lock tabs.
+    for (let i = 0; i < savedTabs.length; i++) {
+      if (i === 0 && lockTabs.length > 0) {
         try {
-          await chrome.tabs.update(currentTabs[i].id, { url: savedUrl });
-        } catch (e) {
-          // If we can't update, try creating a new tab
-          try { await chrome.tabs.create({ url: savedUrl }); } catch (e2) { }
+          await chrome.tabs.update(lockTabs[0].id, { url: savedTabs[0].url, pinned: savedTabs[0].pinned });
+        } catch (_) {
+          try { await chrome.tabs.create({ url: savedTabs[0].url, pinned: savedTabs[0].pinned }); } catch (_2) {}
         }
-      } else if (i > 0) {
-        // Extra lock tabs with no corresponding saved tab — close them
-        try { await chrome.tabs.remove(currentTabs[i].id); } catch (e) { }
       } else {
-        // First tab, no saved URL — go to new tab
-        try { await chrome.tabs.update(currentTabs[i].id, { url: 'brave://newtab' }); } catch (e) { }
+        try {
+          await chrome.tabs.create({ url: savedTabs[i].url, pinned: savedTabs[i].pinned });
+        } catch (_) {}
       }
     }
 
-    // If we had more saved tabs than current tabs, open the remaining ones
-    if (restorable.length > currentTabs.length) {
-      for (let i = currentTabs.length; i < restorable.length; i++) {
-        try {
-          await chrome.tabs.create({ url: restorable[i].url });
-        } catch (e) { }
-      }
+    // Close any extra lock-page tabs that have no matching saved tab
+    for (let i = 1; i < lockTabs.length; i++) {
+      try { await chrome.tabs.remove(lockTabs[i].id); } catch (_) {}
     }
   } else {
-    // No saved tabs — just navigate away from lock page
-    if (currentTabs.length > 0) {
-      await chrome.tabs.update(currentTabs[0].id, { url: 'brave://newtab' });
+    // No saved tabs — open new tab page
+    if (lockTabs.length > 0) {
+      try { await chrome.tabs.update(lockTabs[0].id, { url: 'chrome://newtab/' }); } catch (_) {}
+    } else {
+      try { await chrome.tabs.create({ url: 'chrome://newtab/' }); } catch (_) {}
     }
-    // Close extra lock tabs
-    for (let i = 1; i < currentTabs.length; i++) {
-      try { await chrome.tabs.remove(currentTabs[i].id); } catch (e) { }
+    for (let i = 1; i < lockTabs.length; i++) {
+      try { await chrome.tabs.remove(lockTabs[i].id); } catch (_) {}
     }
   }
 
-  // Clear saved tabs
   await chrome.storage.local.remove(STORAGE_KEYS.SAVED_TABS);
-
-  // Clear badge
   chrome.action.setBadgeText({ text: '' });
+  rescheduleAutoLockAlarm();
+
+  // Notify any content scripts that are still alive on restored tabs
+  const updatedTabs = await chrome.tabs.query({});
+  for (const tab of updatedTabs) {
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: 'UNLOCK' });
+    } catch (_) {}
+  }
 }
 
-// Also intercept tab navigation while locked
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.url) {
-    const data = await chrome.storage.local.get([STORAGE_KEYS.IS_LOCKED]);
-    if (data[STORAGE_KEYS.IS_LOCKED] && !changeInfo.url.startsWith(chrome.runtime.getURL(''))) {
-      try {
-        await chrome.tabs.update(tabId, { url: LOCK_PAGE });
-      } catch (e) { }
-    }
+async function redirectAllTabsToLockPage() {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (tab.url && isExtensionUrl(tab.url)) continue;
+    try {
+      await chrome.tabs.update(tab.id, { url: LOCK_PAGE });
+    } catch (_) {}
+  }
+}
+
+// ---- Auto-Lock via chrome.alarms ----
+// Alarms survive service worker termination; chrome.idle does not.
+
+async function rescheduleAutoLockAlarm() {
+  await chrome.alarms.clear(ALARM_NAME);
+
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.LOCK_ENABLED,
+    STORAGE_KEYS.AUTO_LOCK_MINUTES,
+    STORAGE_KEYS.IS_LOCKED,
+  ]);
+
+  if (!data[STORAGE_KEYS.LOCK_ENABLED] || data[STORAGE_KEYS.IS_LOCKED]) return;
+
+  const minutes = data[STORAGE_KEYS.AUTO_LOCK_MINUTES];
+  if (minutes === 'close' || minutes === 0 || minutes === '0') return;
+
+  const delayInMinutes = parseInt(minutes, 10);
+  if (!isNaN(delayInMinutes) && delayInMinutes > 0) {
+    chrome.alarms.create(ALARM_NAME, { delayInMinutes });
+  }
+}
+
+function cancelAutoLockAlarm() {
+  chrome.alarms.clear(ALARM_NAME);
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== ALARM_NAME) return;
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.LOCK_ENABLED,
+    STORAGE_KEYS.IS_LOCKED,
+  ]);
+  if (data[STORAGE_KEYS.LOCK_ENABLED] && !data[STORAGE_KEYS.IS_LOCKED]) {
+    await lockBrowser();
   }
 });
 
-// ---- Password Hashing ----
-async function hashPassword(password) {
+// Kick off the alarm on service worker wake if applicable
+rescheduleAutoLockAlarm();
+
+// ---- Password Hashing (PBKDF2) ----
+// Each password is stored as { hash: hex, salt: hex, iterations: number }.
+// The random salt means identical passwords produce different hashes.
+
+async function hashPasswordPBKDF2(password) {
+  const encoder = new TextEncoder();
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = 310_000;
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const hashBuffer = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations },
+    keyMaterial,
+    256
+  );
+
+  const toHex = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+  return {
+    hash: toHex(hashBuffer),
+    salt: toHex(saltBytes),
+    iterations,
+  };
+}
+
+async function verifyPasswordPBKDF2(password, stored) {
+  const encoder = new TextEncoder();
+  const saltBytes = new Uint8Array(stored.salt.match(/.{2}/g).map((b) => parseInt(b, 16)));
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const hashBuffer = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: stored.iterations },
+    keyMaterial,
+    256
+  );
+
+  const toHex = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return toHex(hashBuffer) === stored.hash;
+}
+
+// Legacy SHA-256 verification (for migration detection only)
+async function hashPasswordV1(password) {
   const encoder = new TextEncoder();
   const data = encoder.encode(password + '_brave_biometric_salt_v1');
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function verifyPassword(password) {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.FALLBACK_PASSWORD_HASH]);
-  const storedHash = stored[STORAGE_KEYS.FALLBACK_PASSWORD_HASH];
-  if (!storedHash) return false;
-  const inputHash = await hashPassword(password);
-  return inputHash === storedHash;
-}
+// ---- Brute-Force Rate Limiting ----
 
-// ---- Idle Detection ----
-chrome.idle.onStateChanged.addListener(async (state) => {
-  if (state === 'locked' || state === 'idle') {
-    const data = await chrome.storage.local.get([
-      STORAGE_KEYS.LOCK_ENABLED,
-      STORAGE_KEYS.IS_LOCKED,
-      STORAGE_KEYS.AUTO_LOCK_MINUTES,
-    ]);
+async function checkRateLimit() {
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.FAILED_ATTEMPTS,
+    STORAGE_KEYS.LOCKED_UNTIL,
+  ]);
 
-    // Skip idle lock if set to "close" (only lock on browser restart) or "0" (never)
-    const autoLock = data[STORAGE_KEYS.AUTO_LOCK_MINUTES];
-    if (autoLock === 'close' || autoLock === 0 || autoLock === '0') return;
-
-    if (data[STORAGE_KEYS.LOCK_ENABLED] && !data[STORAGE_KEYS.IS_LOCKED]) {
-      await lockBrowser();
+  const lockedUntil = data[STORAGE_KEYS.LOCKED_UNTIL];
+  if (lockedUntil) {
+    if (lockedUntil === Infinity || lockedUntil > Date.now()) {
+      const remaining = lockedUntil === Infinity ? null : Math.ceil((lockedUntil - Date.now()) / 1000);
+      return { locked: true, remainingSeconds: remaining };
     }
   }
-});
 
-// Set idle detection interval
-chrome.storage.local.get([STORAGE_KEYS.AUTO_LOCK_MINUTES], (data) => {
-  const minutes = data[STORAGE_KEYS.AUTO_LOCK_MINUTES] || 5;
-  if (minutes > 0) {
-    chrome.idle.setDetectionInterval(minutes * 60);
+  return { locked: false };
+}
+
+async function recordFailedAttempt() {
+  const data = await chrome.storage.local.get([STORAGE_KEYS.FAILED_ATTEMPTS]);
+  const attempts = (data[STORAGE_KEYS.FAILED_ATTEMPTS] || 0) + 1;
+
+  let lockedUntil = null;
+  for (const rule of LOCKOUT_SCHEDULE) {
+    if (attempts >= rule.after) {
+      lockedUntil = rule.durationMs === Infinity ? Infinity : Date.now() + rule.durationMs;
+    }
   }
-});
+
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.FAILED_ATTEMPTS]: attempts,
+    [STORAGE_KEYS.LOCKED_UNTIL]: lockedUntil,
+  });
+}
 
 // ---- Message Handling ----
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender)
     .then(sendResponse)
     .catch((err) => sendResponse({ success: false, error: err.message }));
-  return true; // Keep channel open for async
+  return true; // keep channel open for async
 });
 
 async function handleMessage(message, sender) {
   switch (message.type) {
+
     case 'GET_LOCK_STATE': {
       const data = await chrome.storage.local.get([
         STORAGE_KEYS.IS_LOCKED,
         STORAGE_KEYS.LOCK_ENABLED,
         STORAGE_KEYS.AUTO_LOCK_MINUTES,
-        STORAGE_KEYS.FALLBACK_PASSWORD_HASH,
+        STORAGE_KEYS.FALLBACK_PASSWORD,
+        STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1,
+        STORAGE_KEYS.WEBAUTHN_CREDENTIAL,
+        STORAGE_KEYS.SAVED_TABS,
       ]);
       return {
         isLocked: data[STORAGE_KEYS.IS_LOCKED] || false,
         lockEnabled: data[STORAGE_KEYS.LOCK_ENABLED] || false,
-        autoLockMinutes: data[STORAGE_KEYS.AUTO_LOCK_MINUTES] || 5,
-        hasPassword: !!data[STORAGE_KEYS.FALLBACK_PASSWORD_HASH],
+        autoLockMinutes: data[STORAGE_KEYS.AUTO_LOCK_MINUTES] ?? 5,
+        hasPassword: !!(data[STORAGE_KEYS.FALLBACK_PASSWORD] || data[STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1]),
+        hasLegacyPassword: !!data[STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1] && !data[STORAGE_KEYS.FALLBACK_PASSWORD],
+        hasCredential: !!data[STORAGE_KEYS.WEBAUTHN_CREDENTIAL],
+        savedTabCount: (data[STORAGE_KEYS.SAVED_TABS] || []).length,
+      };
+    }
+
+    case 'GET_UNLOCK_AUDIT': {
+      const data = await chrome.storage.local.get([
+        STORAGE_KEYS.LAST_UNLOCK_TIME,
+        STORAGE_KEYS.FAILED_ATTEMPTS,
+        STORAGE_KEYS.LOCKED_UNTIL,
+      ]);
+      return {
+        lastUnlockTime: data[STORAGE_KEYS.LAST_UNLOCK_TIME] || null,
+        failedAttempts: data[STORAGE_KEYS.FAILED_ATTEMPTS] || 0,
+        lockedUntil: data[STORAGE_KEYS.LOCKED_UNTIL] || null,
       };
     }
 
     case 'BIOMETRIC_AUTH_SUCCESS': {
-      // Called by lock page / popup after successful WebAuthn verification.
-      // Verify the sender is an extension page (not a content script).
-      if (sender.url && sender.url.startsWith(chrome.runtime.getURL(''))) {
-        await unlockBrowser();
-        return { success: true };
+      // Only accept from extension pages (not content scripts)
+      if (!sender.url || !isExtensionUrl(sender.url)) {
+        return { success: false, error: 'Unauthorized sender' };
       }
-      return { success: false, error: 'Unauthorized sender' };
+      await unlockBrowser();
+      return { success: true };
     }
 
     case 'AUTHENTICATE_PASSWORD': {
-      const verified = await verifyPassword(message.password);
+      const rateCheck = await checkRateLimit();
+      if (rateCheck.locked) {
+        const msg = rateCheck.remainingSeconds
+          ? `Too many attempts. Try again in ${rateCheck.remainingSeconds}s`
+          : 'Too many attempts. Use biometrics to unlock.';
+        return { success: false, error: msg, rateLimited: true };
+      }
+
+      const verified = await verifyPasswordAny(message.password);
       if (verified) {
         await unlockBrowser();
         return { success: true };
       }
+
+      await recordFailedAttempt();
       return { success: false, error: 'Incorrect password' };
     }
 
     case 'VERIFY_PASSWORD': {
-      const verified = await verifyPassword(message.password);
-      return { success: verified, error: verified ? '' : 'Incorrect password' };
-    }
-
-    case 'VERIFY_BIOMETRIC': {
-      // Biometric verification now happens directly in the popup/lock page
-      // via WebAuthn. This message type is kept for backward compatibility
-      // but the actual auth is handled client-side.
-      return { success: false, error: 'Use WebAuthn directly from extension page' };
+      const rateCheck = await checkRateLimit();
+      if (rateCheck.locked) {
+        return { success: false, error: 'Rate limited', rateLimited: true };
+      }
+      const verified = await verifyPasswordAny(message.password);
+      if (!verified) await recordFailedAttempt();
+      return { success: verified };
     }
 
     case 'SET_LOCK_ENABLED': {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.LOCK_ENABLED]: message.enabled,
-      });
+      await chrome.storage.local.set({ [STORAGE_KEYS.LOCK_ENABLED]: message.enabled });
       if (!message.enabled) {
         await chrome.storage.local.set({ [STORAGE_KEYS.IS_LOCKED]: false });
+        cancelAutoLockAlarm();
+      } else {
+        rescheduleAutoLockAlarm();
       }
       return { success: true };
     }
@@ -319,40 +451,86 @@ async function handleMessage(message, sender) {
     case 'SET_AUTO_LOCK_MINUTES': {
       const raw = message.minutes;
       const value = raw === 'close' ? 'close' : parseInt(raw, 10);
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.AUTO_LOCK_MINUTES]: value,
-      });
-      if (typeof value === 'number' && value > 0) {
-        chrome.idle.setDetectionInterval(value * 60);
-      }
+      await chrome.storage.local.set({ [STORAGE_KEYS.AUTO_LOCK_MINUTES]: value });
+      rescheduleAutoLockAlarm();
       return { success: true };
     }
 
     case 'SET_FALLBACK_PASSWORD': {
-      if (message.password) {
-        const hash = await hashPassword(message.password);
-        await chrome.storage.local.set({
-          [STORAGE_KEYS.FALLBACK_PASSWORD_HASH]: hash,
-        });
-      } else {
-        await chrome.storage.local.remove(STORAGE_KEYS.FALLBACK_PASSWORD_HASH);
+      if (!message.password || message.password.length < 8) {
+        return { success: false, error: 'Password must be at least 8 characters' };
       }
+      const stored = await hashPasswordPBKDF2(message.password);
+      await chrome.storage.local.set({ [STORAGE_KEYS.FALLBACK_PASSWORD]: stored });
+      // Clear legacy v1 hash on upgrade
+      await chrome.storage.local.remove(STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1);
+      return { success: true };
+    }
+
+    case 'REMOVE_FALLBACK_PASSWORD': {
+      await chrome.storage.local.remove([
+        STORAGE_KEYS.FALLBACK_PASSWORD,
+        STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1,
+      ]);
+      return { success: true };
+    }
+
+    case 'RESET_CREDENTIAL': {
+      await chrome.storage.local.remove(STORAGE_KEYS.WEBAUTHN_CREDENTIAL);
       return { success: true };
     }
 
     case 'LOCK_NOW': {
+      const data = await chrome.storage.local.get([STORAGE_KEYS.LOCK_ENABLED]);
+      if (!data[STORAGE_KEYS.LOCK_ENABLED]) {
+        return { success: false, error: 'Lock is not enabled' };
+      }
       await lockBrowser();
       return { success: true };
-    }
-
-    case 'CHECK_BIOMETRIC_SUPPORT': {
-      // Biometric support is now checked directly in extension pages via WebAuthn.
-      // Service workers don't have access to navigator.credentials, so we return
-      // a hint to check from the extension page context.
-      return { supported: false, error: 'Check from extension page using isBiometricAvailable()' };
     }
 
     default:
       return { success: false, error: 'Unknown message type' };
   }
+}
+
+// ---- Helpers ----
+
+async function verifyPasswordAny(password) {
+  const data = await chrome.storage.local.get([
+    STORAGE_KEYS.FALLBACK_PASSWORD,
+    STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1,
+  ]);
+
+  // Prefer new PBKDF2 format
+  if (data[STORAGE_KEYS.FALLBACK_PASSWORD]) {
+    return verifyPasswordPBKDF2(password, data[STORAGE_KEYS.FALLBACK_PASSWORD]);
+  }
+
+  // Fall back to legacy v1 format (detected but NOT auto-migrated — user prompted in UI)
+  if (data[STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1]) {
+    const inputHash = await hashPasswordV1(password);
+    return inputHash === data[STORAGE_KEYS.FALLBACK_PASSWORD_HASH_V1];
+  }
+
+  return false;
+}
+
+function isExtensionUrl(url) {
+  return url.startsWith(chrome.runtime.getURL(''));
+}
+
+function isInternalUrl(url) {
+  return (
+    url.startsWith('chrome://') ||
+    url.startsWith('chrome-extension://') ||
+    url.startsWith('brave://') ||
+    url.startsWith('about:') ||
+    url.startsWith('edge://')
+  );
+}
+
+function setBadgeLocked() {
+  chrome.action.setBadgeText({ text: '🔒' });
+  chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
 }

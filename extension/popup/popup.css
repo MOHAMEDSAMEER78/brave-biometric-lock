@@ -1,8 +1,7 @@
 /* ============================================================
-   Brave Biometric Lock — Premium Popup Styles (Dribbble-Inspired)
+   Brave Biometric Lock v2 — Popup Styles
+   System fonts only. No external requests.
    ============================================================ */
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 * {
   margin: 0;
@@ -12,8 +11,8 @@
 
 body {
   width: 360px;
-  min-height: 460px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  min-height: 480px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   background: #08080d;
   color: #e4e4e7;
@@ -31,28 +30,22 @@ body::before {
   height: 200%;
   background:
     radial-gradient(ellipse at 20% 20%, rgba(255, 107, 53, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.04) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.03) 0%, transparent 50%);
+    radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.04) 0%, transparent 50%);
   animation: meshMove 20s ease-in-out infinite alternate;
   pointer-events: none;
   z-index: 0;
 }
 
 @keyframes meshMove {
-  0% {
-    transform: translate(0, 0) rotate(0deg);
-  }
-
-  100% {
-    transform: translate(-5%, -5%) rotate(3deg);
-  }
+  0%   { transform: translate(0, 0); }
+  100% { transform: translate(-5%, -5%) rotate(3deg); }
 }
 
 .popup {
-  padding: 24px 20px 20px;
+  padding: 22px 20px 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   position: relative;
   z-index: 1;
 }
@@ -62,7 +55,7 @@ body::before {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding-bottom: 18px;
+  padding-bottom: 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
@@ -71,34 +64,20 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
+  width: 50px;
+  height: 50px;
   background: linear-gradient(145deg, rgba(255, 107, 53, 0.12), rgba(255, 140, 66, 0.06));
-  border-radius: 16px;
+  border-radius: 15px;
   color: #ff8c42;
   flex-shrink: 0;
   border: 1px solid rgba(255, 107, 53, 0.1);
 }
 
-.header-icon::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 16px;
-  background: linear-gradient(145deg, rgba(255, 107, 53, 0.2), transparent 60%);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  -webkit-mask-composite: xor;
-  padding: 1px;
-  pointer-events: none;
-}
-
 .header-text h1 {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 800;
   color: #ffffff;
-  letter-spacing: -0.4px;
+  letter-spacing: -0.3px;
   background: linear-gradient(135deg, #fff 0%, rgba(255, 255, 255, 0.7) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -108,18 +87,17 @@ body::before {
 .status-text {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.35);
-  margin-top: 3px;
+  margin-top: 2px;
   font-weight: 500;
-  letter-spacing: 0.2px;
 }
 
-/* ---- Lock Indicator ---- */
+/* ---- Lock indicator ---- */
 .lock-indicator {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 18px;
-  border-radius: 14px;
+  padding: 12px 16px;
+  border-radius: 13px;
   font-size: 13px;
   font-weight: 700;
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
@@ -130,59 +108,52 @@ body::before {
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.04) 100%);
   color: #fb7185;
   border: 1px solid rgba(239, 68, 68, 0.12);
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.05);
 }
 
 .lock-indicator.unlocked {
   background: linear-gradient(135deg, rgba(52, 211, 153, 0.08) 0%, rgba(52, 211, 153, 0.04) 100%);
   color: #34d399;
   border: 1px solid rgba(52, 211, 153, 0.12);
-  box-shadow: 0 0 20px rgba(52, 211, 153, 0.05);
 }
 
 .lock-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: currentColor;
   animation: dotPulse 2s ease-in-out infinite;
-  box-shadow: 0 0 8px currentColor;
+  box-shadow: 0 0 6px currentColor;
 }
 
-/* ---- Settings Card ---- */
+/* ---- Settings card ---- */
 .settings {
   display: flex;
   flex-direction: column;
   gap: 1px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
+  border-radius: 15px;
   overflow: hidden;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
-  transition: background 0.25s ease;
+  padding: 13px 16px;
+  transition: background 0.2s ease;
   position: relative;
+  gap: 8px;
 }
 
-.setting-row:hover {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.setting-row+.setting-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
-}
+.setting-row:hover { background: rgba(255, 255, 255, 0.02); }
+.setting-row + .setting-row { border-top: 1px solid rgba(255, 255, 255, 0.03); }
 
 .setting-info {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .setting-label {
@@ -194,100 +165,62 @@ body::before {
 
 .setting-desc {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.28);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* ---- Toggle Switch (iOS style) ---- */
+/* ---- Toggle ---- */
 .toggle {
   position: relative;
-  width: 46px;
-  height: 26px;
+  width: 44px;
+  height: 25px;
   flex-shrink: 0;
 }
 
-.toggle input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
+.toggle input { opacity: 0; width: 0; height: 0; }
 
 .toggle-slider {
   position: absolute;
   cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 26px;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 25px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .toggle-slider::before {
   content: '';
   position: absolute;
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
   left: 3px;
   bottom: 2px;
-  background: linear-gradient(180deg, #fff 0%, #e8e8e8 100%);
+  background: linear-gradient(180deg, #fff 0%, #e4e4e4 100%);
   border-radius: 50%;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 0 1px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
 }
 
-.toggle input:checked+.toggle-slider {
+.toggle input:checked + .toggle-slider {
   background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
   border-color: rgba(255, 107, 53, 0.3);
-  box-shadow: 0 0 16px rgba(255, 107, 53, 0.2);
+  box-shadow: 0 0 14px rgba(255, 107, 53, 0.2);
 }
 
-.toggle input:checked+.toggle-slider::before {
-  transform: translateX(20px);
-}
-
-/* ---- Input ---- */
-.setting-input {
-  width: 110px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  outline: none;
-  transition: all 0.25s ease;
-  font-family: inherit;
-  text-align: right;
-}
-
-.setting-input:focus {
-  border-color: rgba(255, 107, 53, 0.35);
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.08);
-}
-
-.setting-input::placeholder {
-  color: rgba(255, 255, 255, 0.18);
-}
-
-.setting-input.full {
-  width: 100%;
-  text-align: left;
-  padding: 12px 16px;
-  border-radius: 12px;
-  font-size: 13px;
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(19px);
 }
 
 /* ---- Select ---- */
 .setting-select {
-  padding: 8px 28px 8px 12px;
+  padding: 7px 26px 7px 10px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  border-radius: 9px;
   color: #fff;
   font-size: 12px;
   font-weight: 500;
@@ -296,10 +229,11 @@ body::before {
   font-family: inherit;
   appearance: none;
   -webkit-appearance: none;
-  transition: all 0.25s ease;
+  flex-shrink: 0;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
   background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23666' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 10px center;
+  background-position: right 9px center;
 }
 
 .setting-select:focus {
@@ -307,24 +241,26 @@ body::before {
   box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.08);
 }
 
-.setting-select option {
-  background: #13131a;
-  color: #fff;
+.setting-select option { background: #13131a; color: #fff; }
+
+/* ---- Setting button ---- */
+.btn-group {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-/* ---- Setting Button ---- */
 .setting-btn {
-  padding: 7px 16px;
+  padding: 6px 14px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border-radius: 9px;
   color: #e4e4e7;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all 0.2s ease;
   font-family: inherit;
-  letter-spacing: 0.1px;
 }
 
 .setting-btn:hover {
@@ -333,58 +269,155 @@ body::before {
   color: #ff8c42;
 }
 
-/* ---- Password Form ---- */
+.setting-btn.danger {
+  color: #fb7185;
+  border-color: rgba(239, 68, 68, 0.12);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.setting-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.22);
+  color: #f87171;
+}
+
+/* ---- Input ---- */
+.setting-input {
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  font-family: inherit;
+}
+
+.setting-input:focus {
+  border-color: rgba(255, 107, 53, 0.35);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.08);
+}
+
+.setting-input::placeholder { color: rgba(255, 255, 255, 0.18); }
+.setting-input.full { width: 100%; }
+
+/* ---- Password form ---- */
 .password-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 18px 16px;
+  gap: 8px;
+  padding: 12px 16px 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.03);
   background: rgba(255, 255, 255, 0.01);
 }
 
-.password-form.hidden {
-  display: none;
+.password-form.hidden { display: none; }
+.hidden { display: none !important; }
+
+.form-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 500;
+  display: block;
+  margin-bottom: 4px;
 }
 
 .password-actions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
-.hidden {
-  display: none !important;
-}
-
-.verify-error {
+.field-error {
   font-size: 11px;
   color: #fb7185;
-  margin-top: 2px;
   min-height: 14px;
   font-weight: 500;
 }
 
-/* ---- Biometric Info ---- */
+/* ---- Notice (migration warning) ---- */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(251, 191, 36, 0.07);
+  border: 1px solid rgba(251, 191, 36, 0.15);
+  border-radius: 10px;
+  font-size: 11px;
+  color: #fbbf24;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.notice svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ---- Audit row ---- */
+.audit-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 11px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 13px;
+}
+
+.audit-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.audit-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.25);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.audit-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.audit-value-warn { color: #fbbf24 !important; }
+
+.audit-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0 14px;
+}
+
+/* ---- Biometric info ---- */
 .biometric-info {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: 8px;
+  padding: 10px 14px;
   background: linear-gradient(135deg, rgba(255, 107, 53, 0.05), rgba(255, 140, 66, 0.02));
   border: 1px solid rgba(255, 107, 53, 0.08);
-  border-radius: 12px;
+  border-radius: 11px;
   font-size: 11px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.4);
 }
 
-.biometric-info svg {
-  color: #ff8c42;
-  flex-shrink: 0;
-  opacity: 0.8;
+.biometric-info svg { color: #ff8c42; flex-shrink: 0; opacity: 0.8; }
+
+.biometric-info.unavailable {
+  border-color: rgba(239, 68, 68, 0.12);
+  background: rgba(239, 68, 68, 0.05);
 }
+
+.biometric-info.unavailable svg { color: #fb7185; }
 
 /* ---- Buttons ---- */
 .btn {
@@ -392,13 +425,13 @@ body::before {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 14px 22px;
+  padding: 13px 20px;
   border: none;
-  border-radius: 14px;
+  border-radius: 13px;
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s;
   font-family: inherit;
   width: 100%;
   letter-spacing: -0.1px;
@@ -406,40 +439,26 @@ body::before {
   overflow: hidden;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 40%, #ff6b35 100%);
   background-size: 200% 200%;
   color: #fff;
-  box-shadow:
-    0 6px 20px rgba(255, 107, 53, 0.25),
-    0 2px 6px rgba(0, 0, 0, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  box-shadow: 0 5px 18px rgba(255, 107, 53, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   animation: shimmer 3s ease-in-out infinite;
 }
 
-@keyframes shimmer {
-
-  0%,
-  100% {
-    background-position: 0% 50%;
-  }
-
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow:
-    0 10px 28px rgba(255, 107, 53, 0.35),
-    0 4px 10px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 26px rgba(255, 107, 53, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
 }
 
-.btn-primary:active {
-  transform: translateY(0) scale(0.98);
-}
+.btn-primary:active:not(:disabled) { transform: translateY(0) scale(0.98); }
 
 .btn-ghost {
   background: rgba(255, 255, 255, 0.03);
@@ -447,69 +466,71 @@ body::before {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.75);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
 .btn-sm {
-  padding: 9px 18px;
+  padding: 8px 16px;
   font-size: 12px;
-  border-radius: 10px;
+  border-radius: 9px;
   width: auto;
   font-weight: 600;
 }
 
 /* ---- Actions ---- */
-.actions {
-  margin-top: 2px;
-}
+.actions { margin-top: 2px; }
 
 /* ---- Animations ---- */
 @keyframes dotPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.8); }
+}
 
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: 0.4;
-    transform: scale(0.8);
-  }
+@keyframes shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50%       { background-position: 100% 50%; }
 }
 
 /* ---- Toast ---- */
 .toast {
   position: fixed;
-  bottom: 16px;
+  bottom: 14px;
   left: 50%;
-  transform: translateX(-50%) translateY(60px);
-  padding: 11px 22px;
+  transform: translateX(-50%) translateY(55px);
+  padding: 10px 20px;
   background: rgba(52, 211, 153, 0.12);
   border: 1px solid rgba(52, 211, 153, 0.15);
-  border-radius: 12px;
+  border-radius: 11px;
   color: #34d399;
   font-size: 12px;
   font-weight: 600;
   opacity: 0;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
   z-index: 100;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  letter-spacing: 0.1px;
+  white-space: nowrap;
 }
 
-.toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 .toast.error {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.15);
   color: #fb7185;
+}
+
+/* ---- Accessibility: reduced motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  .btn-primary,
+  .lock-dot,
+  .toast {
+    animation: none !important;
+    transition: none !important;
+  }
 }

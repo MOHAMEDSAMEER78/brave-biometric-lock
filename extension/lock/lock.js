@@ -1,91 +1,152 @@
 // ============================================================
-// Brave Biometric Lock — Lock Screen Script
+// Brave Biometric Lock v2 — Lock Screen Script
 // ============================================================
 
 document.addEventListener('DOMContentLoaded', init);
 
-function init() {
-    const unlockBtn = document.getElementById('unlock-btn');
-    const passwordToggle = document.getElementById('password-toggle');
-    const passwordInput = document.getElementById('password-input');
-    const passwordSubmit = document.getElementById('password-submit');
-    const fingerprint = document.getElementById('fingerprint-icon');
-    const statusEl = document.getElementById('status');
+async function init() {
+  const unlockBtn = document.getElementById('unlock-btn');
+  const unlockBtnLabel = document.getElementById('unlock-btn-label');
+  const passwordToggle = document.getElementById('password-toggle');
+  const passwordSection = document.getElementById('password-section');
+  const passwordInput = document.getElementById('password-input');
+  const passwordSubmit = document.getElementById('password-submit');
+  const passwordError = document.getElementById('password-error');
+  const fingerprint = document.getElementById('fingerprint-icon');
+  const statusEl = document.getElementById('status');
+  const tabHint = document.getElementById('tab-restore-hint');
+  const resetCredentialBtn = document.getElementById('reset-credential-btn');
 
-    // Unlock with biometrics (WebAuthn — no native host needed)
-    unlockBtn.addEventListener('click', async () => {
-        setStatus('Authenticating...', 'pending');
-        unlockBtn.disabled = true;
-        fingerprint.className = 'fingerprint-icon authenticating';
+  // ---- 1. Check biometric availability & update button label ----
+  const bio = await isBiometricAvailable();
+  if (bio.supported) {
+    unlockBtnLabel.textContent = `Unlock with ${bio.label}`;
+    unlockBtn.disabled = false;
+  } else {
+    unlockBtnLabel.textContent = 'Biometrics unavailable';
+    unlockBtn.disabled = true;
+    setStatus('Use your fallback password to unlock.', 'info');
+    // Auto-open password section
+    showPasswordSection();
+  }
 
-        const result = await verifyBiometric();
+  // ---- 2. Show saved tab count hint ----
+  try {
+    const state = await sendMessage(MESSAGE_TYPES.GET_LOCK_STATE, {});
+    if (state && state.savedTabCount > 0) {
+      tabHint.textContent = `${state.savedTabCount} tab${state.savedTabCount !== 1 ? 's' : ''} will be restored`;
+    }
+  } catch (_) {}
 
-        if (result.success) {
-            setStatus('Authenticated!', 'success');
-            fingerprint.className = 'fingerprint-icon success';
-            // Tell background to unlock the browser
-            chrome.runtime.sendMessage({ type: 'BIOMETRIC_AUTH_SUCCESS' });
-        } else {
-            setStatus(result.error || 'Authentication failed', 'error');
-            fingerprint.className = 'fingerprint-icon error';
-            unlockBtn.disabled = false;
-            setTimeout(() => {
-                fingerprint.className = 'fingerprint-icon';
-            }, 2000);
-        }
-    });
+  // ---- 3. Biometric unlock ----
+  unlockBtn.addEventListener('click', async () => {
+    unlockBtn.disabled = true;
+    fingerprint.className = 'fingerprint-icon authenticating';
+    setStatus('Authenticating…', 'pending');
+    passwordError.textContent = '';
 
-    // Password toggle
-    passwordToggle.addEventListener('click', () => {
-        const section = document.getElementById('password-section');
-        section.classList.toggle('visible');
-        if (section.classList.contains('visible')) {
-            passwordInput.focus();
-        }
-    });
+    const result = await verifyBiometric();
 
-    // Password submit
-    passwordSubmit.addEventListener('click', submitPassword);
-    passwordInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') submitPassword();
-    });
+    if (result.success) {
+      setStatus('Authenticated!', 'success');
+      fingerprint.className = 'fingerprint-icon success';
+      chrome.runtime.sendMessage({ type: MESSAGE_TYPES.BIOMETRIC_AUTH_SUCCESS });
+    } else {
+      fingerprint.className = 'fingerprint-icon error';
+      setStatus(result.error || 'Authentication failed.', 'error');
+      unlockBtn.disabled = false;
 
-    function submitPassword() {
-        const password = passwordInput.value;
-        if (!password) {
-            setStatus('Please enter your password', 'error');
-            return;
-        }
+      // If credential is stale, surface the reset button
+      if (result.errorCode === 'InvalidStateError') {
+        resetCredentialBtn.classList.remove('hidden');
+      }
 
-        chrome.runtime.sendMessage(
-            { type: 'AUTHENTICATE_PASSWORD', password },
-            (response) => {
-                if (response && response.success) {
-                    setStatus('Authenticated!', 'success');
-                    fingerprint.className = 'fingerprint-icon success';
-                } else {
-                    setStatus(response?.error || 'Incorrect password', 'error');
-                    passwordInput.value = '';
-                    passwordInput.focus();
-                    fingerprint.className = 'fingerprint-icon error';
-                    setTimeout(() => {
-                        fingerprint.className = 'fingerprint-icon';
-                    }, 2000);
-                }
-            }
-        );
+      setTimeout(() => {
+        fingerprint.className = 'fingerprint-icon';
+      }, 2000);
+    }
+  });
+
+  // ---- 4. Password toggle ----
+  passwordToggle.addEventListener('click', () => {
+    const isHidden = passwordSection.getAttribute('aria-hidden') !== 'false';
+    showPasswordSection(isHidden);
+  });
+
+  function showPasswordSection(show = true) {
+    passwordSection.setAttribute('aria-hidden', String(!show));
+    passwordSection.classList.toggle('visible', show);
+    if (show && passwordInput) passwordInput.focus();
+  }
+
+  // ---- 5. Password submission ----
+  passwordSubmit.addEventListener('click', submitPassword);
+  passwordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitPassword();
+  });
+
+  async function submitPassword() {
+    const password = passwordInput.value;
+    if (!password) {
+      passwordError.textContent = 'Enter your password.';
+      return;
     }
 
-    function setStatus(text, type) {
-        statusEl.textContent = text;
-        statusEl.className = `status ${type}`;
+    passwordError.textContent = '';
+    passwordSubmit.disabled = true;
+
+    const response = await sendMessage(MESSAGE_TYPES.AUTHENTICATE_PASSWORD, { password });
+
+    if (response && response.success) {
+      setStatus('Authenticated!', 'success');
+      fingerprint.className = 'fingerprint-icon success';
+    } else {
+      const msg = (response && response.rateLimited)
+        ? response.error
+        : 'Incorrect password.';
+      passwordError.textContent = msg;
+      fingerprint.className = 'fingerprint-icon error';
+      passwordInput.value = '';
+      passwordInput.focus();
+      setTimeout(() => {
+        fingerprint.className = 'fingerprint-icon';
+      }, 2000);
     }
 
-    // Listen for unlock from background
-    chrome.runtime.onMessage.addListener((message) => {
-        if (message.type === 'UNLOCK') {
-            fingerprint.className = 'fingerprint-icon success';
-            setStatus('Unlocked!', 'success');
-        }
+    passwordSubmit.disabled = false;
+  }
+
+  // ---- 6. Credential reset ----
+  resetCredentialBtn.addEventListener('click', async () => {
+    resetCredentialBtn.disabled = true;
+    await sendMessage(MESSAGE_TYPES.RESET_CREDENTIAL, {});
+    await resetCredential(); // clear local storage copy
+    resetCredentialBtn.classList.add('hidden');
+    unlockBtn.disabled = false;
+    setStatus('Credential reset. Click unlock to re-register.', 'info');
+  });
+
+  // ---- 7. Listen for unlock broadcast from background ----
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'UNLOCK') {
+      fingerprint.className = 'fingerprint-icon success';
+      setStatus('Unlocked!', 'success');
+    }
+  });
+
+  // ---- Helpers ----
+
+  function setStatus(text, type) {
+    statusEl.textContent = text;
+    statusEl.className = `status ${type}`;
+  }
+
+  function sendMessage(type, extra = {}) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type, ...extra }, (response) => {
+        if (chrome.runtime.lastError) { resolve(null); return; }
+        resolve(response || null);
+      });
     });
+  }
 }

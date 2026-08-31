@@ -1,34 +1,72 @@
 // ============================================================
-// Brave Biometric Lock — WebAuthn Biometric Module
+// Brave Biometric Lock v2 — WebAuthn Biometric Module
 // ============================================================
-// Replaces the native messaging host with browser-native WebAuthn API.
-// Uses platform authenticators (Touch ID, Face ID, Windows Hello)
-// just like how browsers handle biometrics for saved passwords.
+// Provides:
+//   isBiometricAvailable()  → { supported, biometryType, label }
+//   hasRegisteredCredential() → boolean
+//   registerBiometric()     → { success, error?, errorCode? }
+//   verifyBiometric()       → { success, error?, errorCode? }
+//   resetCredential()       → void
 // ============================================================
 
 const WEBAUTHN_CREDENTIAL_KEY = 'webauthn_credential';
 
-/**
- * Check if a platform authenticator (Touch ID / Face ID / Windows Hello) is available.
- */
-async function isBiometricAvailable() {
-  if (typeof PublicKeyCredential === 'undefined') {
-    return { supported: false, error: 'WebAuthn not supported in this browser' };
-  }
-  try {
-    const available =
-      await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-    return {
-      supported: available,
-      biometryType: available ? 'platform' : 'none',
-    };
-  } catch (e) {
-    return { supported: false, error: e.message };
-  }
+const BIOMETRY_ERROR_MAP = {
+  NotAllowedError: 'Authentication cancelled or timed out.',
+  InvalidStateError: 'Credential is no longer valid. Please reset and re-register.',
+  NotSupportedError: 'Biometrics are not supported on this device.',
+  SecurityError: 'Security error during authentication.',
+  AbortError: 'Authentication was aborted.',
+  UnknownError: 'An unknown error occurred.',
+};
+
+function friendlyError(e) {
+  return BIOMETRY_ERROR_MAP[e.name] || e.message || 'Unknown error';
 }
 
 /**
- * Check if a biometric credential has already been registered.
+ * Detect platform authenticator availability and identify biometry type.
+ * Returns: { supported: boolean, biometryType: string, label: string }
+ */
+async function isBiometricAvailable() {
+  if (typeof PublicKeyCredential === 'undefined') {
+    return { supported: false, biometryType: 'none', label: 'Biometrics' };
+  }
+
+  try {
+    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!available) {
+      return { supported: false, biometryType: 'none', label: 'Biometrics' };
+    }
+
+    const { biometryType, label } = detectBiometryType();
+    return { supported: true, biometryType, label };
+  } catch (e) {
+    return { supported: false, biometryType: 'none', label: 'Biometrics', error: e.message };
+  }
+}
+
+function detectBiometryType() {
+  const ua = navigator.userAgent;
+  const platform = navigator.platform || '';
+
+  if (/Mac/.test(platform) || /Macintosh/.test(ua)) {
+    return { biometryType: 'touchId', label: 'Touch ID' };
+  }
+  if (/Win/.test(platform) || /Windows/.test(ua)) {
+    return { biometryType: 'windowsHello', label: 'Windows Hello' };
+  }
+  if (/CrOS/.test(ua)) {
+    return { biometryType: 'chromeos', label: 'Device PIN' };
+  }
+  if (/Linux/.test(platform)) {
+    return { biometryType: 'platform', label: 'Biometrics' };
+  }
+  return { biometryType: 'platform', label: 'Biometrics' };
+}
+
+/**
+ * Check if a WebAuthn credential has been registered.
  */
 async function hasRegisteredCredential() {
   const stored = await chrome.storage.local.get([WEBAUTHN_CREDENTIAL_KEY]);
@@ -36,8 +74,8 @@ async function hasRegisteredCredential() {
 }
 
 /**
- * Register a new platform credential (triggers Touch ID / Face ID / Windows Hello).
- * Called once during initial setup.
+ * Register a new platform credential (triggers the biometric prompt).
+ * Called once during initial setup; registration itself verifies the user.
  */
 async function registerBiometric() {
   try {
@@ -54,7 +92,7 @@ async function registerBiometric() {
           displayName: 'Brave Biometric Lock',
         },
         pubKeyCredParams: [
-          { alg: -7, type: 'public-key' },  // ES256
+          { alg: -7, type: 'public-key' },   // ES256
           { alg: -257, type: 'public-key' }, // RS256
         ],
         authenticatorSelection: {
@@ -66,7 +104,6 @@ async function registerBiometric() {
       },
     });
 
-    // Store credential ID for future verification
     const credentialId = Array.from(new Uint8Array(credential.rawId));
     await chrome.storage.local.set({
       [WEBAUTHN_CREDENTIAL_KEY]: { id: credentialId },
@@ -76,29 +113,24 @@ async function registerBiometric() {
   } catch (e) {
     return {
       success: false,
-      error:
-        e.name === 'NotAllowedError'
-          ? 'Biometric registration cancelled'
-          : e.message,
-      errorCode: e.name === 'NotAllowedError' ? 'user_cancel' : 'unknown',
+      error: friendlyError(e),
+      errorCode: e.name,
     };
   }
 }
 
 /**
  * Verify user identity via platform biometrics.
- * If no credential exists yet, auto-registers one first
- * (registration itself requires biometric verification).
+ * If no credential is stored, auto-registers one first.
  */
 async function verifyBiometric() {
   const stored = await chrome.storage.local.get([WEBAUTHN_CREDENTIAL_KEY]);
   const storedCredential = stored[WEBAUTHN_CREDENTIAL_KEY];
 
   if (!storedCredential) {
-    // First use — register a credential (this triggers biometric prompt)
     const regResult = await registerBiometric();
     if (!regResult.success) return regResult;
-    // Registration itself verified the user
+    // Registration itself verifies identity
     return { success: true };
   }
 
@@ -109,13 +141,7 @@ async function verifyBiometric() {
     await navigator.credentials.get({
       publicKey: {
         challenge,
-        allowCredentials: [
-          {
-            id: credentialId,
-            type: 'public-key',
-            transports: ['internal'],
-          },
-        ],
+        allowCredentials: [{ id: credentialId, type: 'public-key', transports: ['internal'] }],
         userVerification: 'required',
         timeout: 60000,
       },
@@ -123,22 +149,22 @@ async function verifyBiometric() {
 
     return { success: true };
   } catch (e) {
-    if (e.name === 'NotAllowedError') {
-      return {
-        success: false,
-        error: 'Authentication cancelled',
-        errorCode: 'user_cancel',
-      };
-    }
     if (e.name === 'InvalidStateError') {
-      // Credential may be invalid — clear it so next attempt re-registers
+      // Stale credential — clear it so the user can re-register
       await chrome.storage.local.remove(WEBAUTHN_CREDENTIAL_KEY);
-      return {
-        success: false,
-        error: 'Credential expired. Please try again.',
-        errorCode: 'invalid_credential',
-      };
     }
-    return { success: false, error: e.message, errorCode: 'unknown' };
+    return {
+      success: false,
+      error: friendlyError(e),
+      errorCode: e.name,
+    };
   }
+}
+
+/**
+ * Clear the stored WebAuthn credential (credential management).
+ * The next biometric prompt will re-register.
+ */
+async function resetCredential() {
+  await chrome.storage.local.remove(WEBAUTHN_CREDENTIAL_KEY);
 }

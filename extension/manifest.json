@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Brave Biometric Lock",
-  "version": "1.0.0",
-  "description": "Lock your Brave browser profile with Touch ID / biometric authentication",
+  "version": "2.0.0",
+  "description": "Lock your Brave browser profile with Touch ID / Face ID / Windows Hello biometric authentication",
   "permissions": [
     "storage",
     "tabs",
     "idle",
+    "alarms",
     "activeTab"
   ],
   "background": {
@@ -16,7 +17,6 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": [],
       "run_at": "document_start"
     }
   ],
@@ -32,5 +32,14 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["lock/lock.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
